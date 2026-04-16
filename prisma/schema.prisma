@@ -1,0 +1,225 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  RESTAURANT
+  WORKER
+  ADMIN
+}
+
+enum ShiftStatus {
+  OPEN        // visible aux workers
+  FILLED      // worker sélectionné, non démarré
+  IN_PROGRESS // shift en cours
+  COMPLETED   // terminé avec succès
+  CANCELLED   // annulé
+  DISPUTED    // litige ouvert
+}
+
+enum ApplicationStatus {
+  APPLIED
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  CAPTURED
+  REFUNDED
+  FAILED
+}
+
+enum PayoutStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+// ─── User (compte commun) ─────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  phone        String?  @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant   Restaurant?
+  worker       Worker?
+
+  ratingsGiven    Rating[] @relation("RatingsGiven")
+  ratingsReceived Rating[] @relation("RatingsReceived")
+
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+// ─── Restaurant ───────────────────────────────────────────────────────────────
+
+model Restaurant {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  businessName        String
+  siret               String?  @unique
+  address             String
+  city                String
+  postalCode          String
+  stripeAccountId     String?  // Stripe Connect account ID
+  kycStatus           String   @default("pending") // pending | verified | rejected
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shifts   Shift[]
+  payments Payment[]
+
+  @@map("restaurants")
+}
+
+// ─── Worker ───────────────────────────────────────────────────────────────────
+
+model Worker {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  firstName            String
+  lastName             String
+  skills               String[] // ex: ["serveur", "barman", "cuisinier"]
+  experience           String?
+  availabilityNotes    String?
+  stripeAccountId      String?  // Stripe Connect Express account ID (pour les payouts)
+  kycStatus            String   @default("pending")
+  reliabilityScore     Float    @default(0) // calculé : shifts complétés / total
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications Application[]
+  payouts      Payout[]
+
+  @@map("workers")
+}
+
+// ─── Shift ────────────────────────────────────────────────────────────────────
+
+model Shift {
+  id           String      @id @default(cuid())
+  restaurantId String
+  role         String      // ex: "serveur", "barman", "plongeur"
+  description  String?
+  payRate      Float       // tarif horaire en EUR
+  location     String      // adresse complète
+  startTime    DateTime
+  endTime      DateTime
+  status       ShiftStatus @default(OPEN)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  restaurant   Restaurant    @relation(fields: [restaurantId], references: [id])
+  applications Application[]
+  payment      Payment?
+  ratings      Rating[]
+
+  @@map("shifts")
+}
+
+// ─── Application ──────────────────────────────────────────────────────────────
+
+model Application {
+  id         String            @id @default(cuid())
+  shiftId    String
+  workerId   String
+  status     ApplicationStatus @default(APPLIED)
+  appliedAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  shift  Shift  @relation(fields: [shiftId], references: [id])
+  worker Worker @relation(fields: [workerId], references: [id])
+
+  @@unique([shiftId, workerId]) // un worker ne peut postuler qu'une fois par shift
+  @@map("applications")
+}
+
+// ─── Payment ──────────────────────────────────────────────────────────────────
+
+model Payment {
+  id                  String        @id @default(cuid())
+  shiftId             String        @unique
+  restaurantId        String
+  amount              Float         // montant total en EUR
+  commission          Float         // commission Neexia (ex: 15%)
+  stripePaymentIntent String?       // Stripe PaymentIntent ID
+  status              PaymentStatus @default(PENDING)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  shift      Shift      @relation(fields: [shiftId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  payout     Payout?
+
+  @@map("payments")
+}
+
+// ─── Payout ───────────────────────────────────────────────────────────────────
+
+model Payout {
+  id              String       @id @default(cuid())
+  workerId        String
+  paymentId       String       @unique
+  amount          Float        // montant net pour le worker
+  stripeTransferId String?     // Stripe Transfer ID
+  status          PayoutStatus @default(PENDING)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  worker  Worker  @relation(fields: [workerId], references: [id])
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@map("payouts")
+}
+
+// ─── Rating ───────────────────────────────────────────────────────────────────
+
+model Rating {
+  id         String   @id @default(cuid())
+  fromUserId String
+  toUserId   String
+  shiftId    String
+  score      Int      // 1 à 5
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  fromUser User  @relation("RatingsGiven", fields: [fromUserId], references: [id])
+  toUser   User  @relation("RatingsReceived", fields: [toUserId], references: [id])
+  shift    Shift @relation(fields: [shiftId], references: [id])
+
+  @@unique([fromUserId, shiftId]) // une note par personne par shift
+  @@map("ratings")
+}
+
+// ─── AuditLog ─────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String   // "shift" | "payment" | "application" | ...
+  entityId   String
+  eventType  String   // "shift.created" | "payment.captured" | ...
+  userId     String?
+  payload    Json     // before/after state
+  timestamp  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
