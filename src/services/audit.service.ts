@@ -19,7 +19,7 @@ export async function audit(options: AuditOptions) {
       entityId:   options.entityId,
       eventType:  options.eventType,
       userId:     options.userId,
-      payload:    options.payload,
+      payload:    options.payload as any,
     },
   });
 }
