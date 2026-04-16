@@ -12,7 +12,7 @@ export const env = {
   JWT_SECRET:             required('JWT_SECRET'),
   JWT_EXPIRES_IN:         process.env.JWT_EXPIRES_IN ?? '7d',
   STRIPE_SECRET_KEY:      required('STRIPE_SECRET_KEY'),
-  STRIPE_WEBHOOK_SECRET:  required('STRIPE_WEBHOOK_SECRET'),
+  STRIPE_WEBHOOK_SECRET:  process.env.STRIPE_WEBHOOK_SECRET ?? '',
   PORT:                   parseInt(process.env.PORT ?? '3000', 10),
   NODE_ENV:               process.env.NODE_ENV ?? 'development',
   NEEXIA_COMMISSION_RATE: parseFloat(process.env.NEEXIA_COMMISSION_RATE ?? '0.15'),
